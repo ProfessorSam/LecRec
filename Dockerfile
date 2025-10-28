@@ -1,5 +1,6 @@
-FROM gcr.io/distroless/java21-debian12
-COPY ./Server/build/libs/LecRec-all.jar /app/app.jar
+FROM openjdk:21-jdk-bookworm
+RUN apt-get -y update && apt-get -y upgrade && apt-get install -y ffmpeg
+COPY ./build/libs/LecRec-1.0-SNAPSHOT-all.jar /app/app.jar
 WORKDIR /app
 EXPOSE 8000
 ENTRYPOINT ["java", "-jar", "app.jar"]
