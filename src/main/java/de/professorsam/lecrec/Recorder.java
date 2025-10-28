@@ -32,6 +32,7 @@ public class Recorder extends Thread{
         this.streamurl = streamurl;
         seriesID = extractSeriesId();
         password = extractPassword();
+        System.out.println("Password: " + seriesID + " " + password);
     }
 
     @Override
@@ -54,8 +55,8 @@ public class Recorder extends Thread{
             System.out.println("Next event starts at " + start +". Sleeping...");
             OffsetDateTime dateTime = OffsetDateTime.parse(start);
             if(dateTime.isBefore(OffsetDateTime.now())){
-                System.out.println("Event starts in the past. Sleeping for 15 minutes");
-                retrySearchingForNextEvent();
+                System.out.println("Event starts in the past. Try downloading");
+                downloadStream();
                 return;
             }
             System.out.println("Event will start at " + dateTime);
@@ -80,10 +81,10 @@ public class Recorder extends Thread{
         }
         System.out.println("Stream url: " + streamUrl);
         streamState = StreamState.RECORDING_STREAM;
-        String filename = Instant.now().toString() + ".mkv";
+        String filename = Instant.now().getEpochSecond() + ".mkv";
         try {
-            Runtime.getRuntime().exec(new String[]{"ffmpeg" , "-i",  streamurl, "-c",  "copy", filename});
-        } catch (IOException e) {
+            Runtime.getRuntime().exec(new String[]{"ffmpeg" , "-i",  streamUrl, "-c",  "copy", filename}).waitFor();
+        } catch (IOException | InterruptedException e) {
             throw new RuntimeException(e);
         }
         File file = new File(filename);
@@ -104,6 +105,7 @@ public class Recorder extends Thread{
         if(password != null){
             apiUrl += "?password=" + password;
         }
+        System.out.println(apiUrl);
         Request request = new Request.Builder()
                 .url(apiUrl)
                 .build();
@@ -115,6 +117,7 @@ public class Recorder extends Thread{
             String json = response.body().string();
             JSONObject jsonObject = new JSONObject(json);
             currentStreamJson = jsonObject;
+            System.out.println(json);
             if(!jsonObject.getBoolean("active")){
                 System.out.println("Stream not active");
                 return null;
@@ -172,6 +175,7 @@ public class Recorder extends Thread{
             String last = split[split.length - 1];
             String password = last.split("\\?")[1];
             password = password.substring(9);
+            System.out.println("Password: " + password);
             return password;
         } catch (Exception e){
             return null;
