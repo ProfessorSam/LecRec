@@ -1,5 +1,7 @@
 package de.professorsam.lecrec;
 
+import com.github.sardine.Sardine;
+import com.github.sardine.SardineFactory;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;
@@ -7,16 +9,22 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.temporal.ChronoUnit;
+import java.util.Base64;
 
 public class Recorder extends Thread{
     private static final OkHttpClient httpclient = new OkHttpClient();
+    private static final String apiBase = System.getenv().getOrDefault("LECREC_API_BASE",
+            "https://dash.uni.electures.uni-muenster.de");
+
     private final String streamurl;
 
     private final String seriesID;
@@ -81,27 +89,77 @@ public class Recorder extends Thread{
         }
         System.out.println("Stream url: " + streamUrl);
         streamState = StreamState.RECORDING_STREAM;
+        File outdir = new File("/streams");
+        outdir.mkdirs();
         String filename = Instant.now().getEpochSecond() + ".mkv";
         try {
-            Runtime.getRuntime().exec(new String[]{"ffmpeg" , "-i",  streamUrl, "-c",  "copy", filename}).waitFor();
+            String[] command = {
+                    "ffmpeg",
+                    "-reconnect", "1",
+                    "-reconnect_streamed", "1",
+                    "-reconnect_delay_max", "10",
+                    "-fflags", "+genpts+igndts+discardcorrupt",
+                    "-i", streamUrl,
+                    "-c:v", "copy",
+                    "-c:a", "aac",
+                    "-b:a", "128k",
+                    "-movflags", "+faststart",
+                    "-t", "02:00:00",
+                    "/streams/" + filename
+            };
+            Runtime.getRuntime().exec(command).waitFor();
         } catch (IOException | InterruptedException e) {
             throw new RuntimeException(e);
         }
-        File file = new File(filename);
-        File outdir = new File("/streams");
-        outdir.mkdirs();
         streamState = StreamState.UPLOADING_STREAM;
+        String username = System.getenv("LECREC_USERNAME");
+        String password = System.getenv("LECREC_PASSWORD");
+        String directory = System.getenv("LECREC_DIRECTORY");
+        String endpoint = System.getenv("LECREC_ENDPOINT");
+        if(username == null || password == null || directory == null || endpoint == null){
+            retrySearchingForNextEvent();
+            return;
+        }
+        directory = new String(Base64.getDecoder().decode(directory), StandardCharsets.UTF_8);
+        endpoint = new String(Base64.getDecoder().decode(endpoint), StandardCharsets.UTF_8);
+        Sardine sardine = SardineFactory.begin(username, password);
         try {
-            Files.copy(file.toPath(), Paths.get("/streams"));
+            File file = new File(outdir, filename);
+            if (!file.exists()) {
+                System.err.println("Recording not found" + file.getAbsolutePath());
+                return;
+            }
+            if(!endpoint.endsWith("/")){
+                endpoint += "/";
+            }
+            if(directory.startsWith("/")){
+                directory = directory.substring(1);
+            }
+            if(!directory.endsWith("/")){
+                directory += "/";
+            }
+            String targetDirUrl = endpoint + directory;
+            String targetFileUrl = targetDirUrl + file.getName();
+            System.out.println("Uploading Stream to: " + targetFileUrl);
+            if (!sardine.exists(targetDirUrl)) {
+                sardine.createDirectory(targetDirUrl);
+                System.out.println("Created Directory: " + targetDirUrl);
+            }
+            try (FileInputStream fis = new FileInputStream(file)) {
+                sardine.put(targetFileUrl, fis);
+                System.out.println("Uploaded Stream to: " + targetFileUrl);
+                Files.delete(Paths.get(file.getAbsolutePath()));
+            }
         } catch (IOException e) {
-            throw new RuntimeException(e);
+            System.out.println("Could not upload stream. Continuing");
+            e.printStackTrace();
         }
         streamState = StreamState.SEARCH_NEXT_EVENT;
         retrySearchingForNextEvent();
     }
 
     private String getStreamUrl(String eventID, String password){
-        String apiUrl = "https://dash.uni.electures.uni-muenster.de/api/livestream/events/" + eventID;
+        String apiUrl = apiBase + "/api/livestream/events/" + eventID;
         if(password != null){
             apiUrl += "?password=" + password;
         }
@@ -149,7 +207,8 @@ public class Recorder extends Thread{
     }
 
     private String getNextEventId(String seriesID){
-        String apiUrl = "https://dash.uni.electures.uni-muenster.de/api/livestream/events?limit=1&series=" + seriesID;
+
+        String apiUrl = apiBase + "/api/livestream/events?limit=1&series=" + seriesID;
         Request request = new Request.Builder()
                 .url(apiUrl)
                 .build();

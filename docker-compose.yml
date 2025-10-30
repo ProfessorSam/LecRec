@@ -6,4 +6,8 @@ services:
     volumes:
       - "/mnt/hetznerbox/streams:/streams"
     environment:
-      - "LECREC_URLS=${LECREC_URLS}"
+      - LECREC_URLS=${LECREC_URLS}
+      - LECREC_USERNAME=${LECREC_USERNAME}
+      - LECREC_PASSWORD=${LECREC_PASSWORD}
+      - LECREC_ENDPOINT=${LECREC_ENDPOINT} //Base64/URL encoded
+      - LECREC_DIRECTORY=${LECREC_DIRECTORY} //Base64/URL encoded

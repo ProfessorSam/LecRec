@@ -5,6 +5,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
@@ -25,16 +26,20 @@ public class LecRec {
         var app = Javalin.create()
                 .get("/", ctx -> ctx.html(html))
                 .get("/api/recorders", ctx -> {
-                    JSONArray root = new JSONArray();
-                    recorders.forEach(recorder -> {
-                        JSONObject rec = new JSONObject();
-                        rec.put("seriesID", recorder.getSeriesID());
-                        rec.put("streamState", recorder.getStreamState());
-                        rec.put("nextStreamStart", recorder.getNextStreamStart().toString());
-                        rec.put("streamurl", "https://dash.uni.electures.uni-muenster.de/livestream/embed_viewer/series/" + recorder.getSeriesID());
-                        root.put(rec);
-                    });
-                    ctx.json(root.toString());
+                    try {
+                        JSONArray root = new JSONArray();
+                        recorders.forEach(recorder -> {
+                            JSONObject rec = new JSONObject();
+                            rec.put("seriesID", recorder.getSeriesID());
+                            rec.put("streamState", recorder.getStreamState());
+                            rec.put("nextStreamStart", recorder.getNextStreamStart() != null ? recorder.getNextStreamStart().toString() : Instant.now().minusSeconds(5).toString());
+                            rec.put("streamurl", "https://dash.uni.electures.uni-muenster.de/livestream/embed_viewer/series/" + recorder.getSeriesID());
+                            root.put(rec);
+                        });
+                        ctx.json(root.toString());
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                    }
                 })
                 .start(8000);
     }
