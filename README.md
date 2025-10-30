@@ -171,13 +171,14 @@ The project includes an integration test using Testcontainers that:
 - Spins up WireMock to mimic the livestream API
 - Spins up a WebDAV server container
 - Starts the LecRec container with env vars
-- Waits briefly and asserts that a file was uploaded to WebDAV. This may fail with a bad internet connection
+- Waits briefly and asserts that a file was uploaded to WebDAV
 
 Run tests:
 ```
 ./gradlew test
 ```
-Note: The test depends on building the Docker image (handled automatically via Gradle task dependency).
+Note: The test depends on building the Docker image (handled automatically via Gradle task dependency). 
+Downloading the test stream requires an internet connection
 
 
 ## Troubleshooting

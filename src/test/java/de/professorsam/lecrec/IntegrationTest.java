@@ -1,6 +1,11 @@
 package de.professorsam.lecrec;
 
 import com.github.sardine.Sardine;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.Response;
+import org.json.JSONArray;
+import org.json.JSONObject;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.BeforeAll;
 import org.testcontainers.containers.GenericContainer;
@@ -10,9 +15,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.wiremock.integrations.testcontainers.WireMockContainer;
 
 import java.io.IOException;
-import java.time.Duration;
 import java.time.Instant;
-import java.time.temporal.ChronoUnit;
 import java.util.Base64;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -116,6 +119,8 @@ class IntegrationTest {
             .withEnv("LECREC_ENDPOINT", Base64.getEncoder().encodeToString("http://webdav.local".getBytes()))
             .withEnv("LECREC_URLS", Base64.getEncoder().encodeToString("http://uni.local/livestream/viewer/series/testseriesid?password=stream".getBytes()))
             .withEnv("LECREC_API_BASE", "http://uni.local:8080")
+            .withNetworkAliases("lecrec.local")
+            .withExposedPorts(8000)
             .dependsOn(mockApi, webdav);
 
     @BeforeAll
@@ -126,10 +131,10 @@ class IntegrationTest {
     }
 
     @Test
-    void integrationTest() throws InterruptedException, IOException {
+    void integrationTest() throws IOException {
         app.start();
         System.out.println("Started test");
-        Thread.sleep(Duration.of(30, ChronoUnit.SECONDS));
+        waitForStreamToFinish();
         System.out.println("Finished test. Checking results");
         Sardine sardine = com.github.sardine.SardineFactory.begin("test", "test");
         String endpoint = "http://" + webdav.getHost() + ":" + webdav.getMappedPort(80) + "/upload/";
@@ -138,7 +143,28 @@ class IntegrationTest {
     }
 
     private void waitForStreamToFinish(){
-
+        while(true){
+            try {
+                Thread.sleep(1000);
+                OkHttpClient client = new OkHttpClient();
+                Request request = new Request.Builder().get().url("http://" + app.getHost() + ":" + app.getMappedPort(8000) + "/api/recorders").build();
+                try (Response response = client.newCall(request).execute()){
+                    JSONArray json = new JSONArray(response.body().string());
+                    if(json.isEmpty()){
+                        continue;
+                    }
+                    JSONObject obj = json.getJSONObject(0);
+                    if(obj.getString("streamState").equals(StreamState.UPLOADING_STREAM.name())){
+                        Thread.sleep(3000);
+                        break;
+                    }
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
+                }
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+        }
     }
 
 }
