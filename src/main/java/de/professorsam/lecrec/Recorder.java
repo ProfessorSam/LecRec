@@ -91,7 +91,7 @@ public class Recorder extends Thread{
         streamState = StreamState.RECORDING_STREAM;
         File outdir = new File("/streams");
         outdir.mkdirs();
-        String filename = Instant.now().getEpochSecond() + ".mkv";
+        String filename = Instant.now().getEpochSecond() + ".mp4";
         try {
             String[] command = {
                     "ffmpeg",
@@ -104,7 +104,7 @@ public class Recorder extends Thread{
                     "-c:a", "aac",
                     "-b:a", "128k",
                     "-movflags", "+faststart",
-                    "-t", "02:00:00",
+                    "-t", "03:00:00",
                     "/streams/" + filename
             };
             Runtime.getRuntime().exec(command).waitFor();

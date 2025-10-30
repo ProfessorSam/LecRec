@@ -33,7 +33,7 @@ public class LecRec {
                             rec.put("seriesID", recorder.getSeriesID());
                             rec.put("streamState", recorder.getStreamState());
                             rec.put("nextStreamStart", recorder.getNextStreamStart() != null ? recorder.getNextStreamStart().toString() : Instant.now().minusSeconds(5).toString());
-                            rec.put("streamurl", "https://dash.uni.electures.uni-muenster.de/livestream/embed_viewer/series/" + recorder.getSeriesID());
+                            rec.put("streamurl", System.getenv("LECREC_API_BASE") == null ? "https://dash.uni.electures.uni-muenster.de" : System.getenv("LECREC_API_BASE") + "/livestream/embed_viewer/series/" + recorder.getSeriesID());
                             root.put(rec);
                         });
                         ctx.json(root.toString());

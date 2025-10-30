@@ -137,4 +137,8 @@ class IntegrationTest {
         assertTrue(!sardine.list(endpoint).isEmpty());
     }
 
+    private void waitForStreamToFinish(){
+
+    }
+
 }
