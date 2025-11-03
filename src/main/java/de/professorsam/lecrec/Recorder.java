@@ -1,15 +1,10 @@
 package de.professorsam.lecrec;
 
-import com.github.sardine.Sardine;
-import com.github.sardine.SardineFactory;
-import okhttp3.OkHttpClient;
-import okhttp3.Request;
-import okhttp3.Response;
+import okhttp3.*;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -122,38 +117,50 @@ public class Recorder extends Thread{
         }
         directory = new String(Base64.getDecoder().decode(directory), StandardCharsets.UTF_8);
         endpoint = new String(Base64.getDecoder().decode(endpoint), StandardCharsets.UTF_8);
-        Sardine sardine = SardineFactory.begin(username, password);
+        File file = new File(outdir, filename);
+        if (!file.exists()) {
+            System.err.println("Recording not found" + file.getAbsolutePath());
+            return;
+        }
+        if(!endpoint.endsWith("/")){
+            endpoint += "/";
+        }
+        if(directory.startsWith("/")){
+            directory = directory.substring(1);
+        }
+        if(!directory.endsWith("/")){
+            directory += "/";
+        }
         try {
-            File file = new File(outdir, filename);
-            if (!file.exists()) {
-                System.err.println("Recording not found" + file.getAbsolutePath());
-                return;
+            String credentials = username + ":" + password;
+            String basicAuth = "Basic " + Base64.getEncoder().encodeToString(credentials.getBytes());
+
+            String targetUrl = endpoint;
+            System.out.println("Uploading Stream to: " + targetUrl);
+            if (!targetUrl.endsWith("/")) targetUrl += "/";
+            targetUrl += directory + file.getName();
+
+            System.out.println("Uploading to: " + targetUrl);
+
+            RequestBody body = RequestBody.create(file, MediaType.parse("application/octet-stream"));
+            Request request = new Request.Builder()
+                    .url(targetUrl)
+                    .header("Authorization", basicAuth)
+                    .put(body)
+                    .build();
+
+            try (Response response = new OkHttpClient().newCall(request).execute()) {
+                if (!response.isSuccessful()) {
+                    throw new IOException("Upload failed: " + response.code() + " " + response.message() + " " + response.body().string());
+                }
+                System.out.println("Upload successful!");
             }
-            if(!endpoint.endsWith("/")){
-                endpoint += "/";
-            }
-            if(directory.startsWith("/")){
-                directory = directory.substring(1);
-            }
-            if(!directory.endsWith("/")){
-                directory += "/";
-            }
-            String targetDirUrl = endpoint + directory;
-            String targetFileUrl = targetDirUrl + file.getName();
-            System.out.println("Uploading Stream to: " + targetFileUrl);
-            if (!sardine.exists(targetDirUrl)) {
-                sardine.createDirectory(targetDirUrl);
-                System.out.println("Created Directory: " + targetDirUrl);
-            }
-            try (FileInputStream fis = new FileInputStream(file)) {
-                sardine.put(targetFileUrl, fis);
-                System.out.println("Uploaded Stream to: " + targetFileUrl);
-                Files.delete(Paths.get(file.getAbsolutePath()));
-            }
+            Files.delete(Paths.get(file.getAbsolutePath()));
         } catch (IOException e) {
-            System.out.println("Could not upload stream. Continuing");
+            System.out.println("Upload failed: " + e.getMessage());
             e.printStackTrace();
         }
+
         streamState = StreamState.SEARCH_NEXT_EVENT;
         retrySearchingForNextEvent();
     }

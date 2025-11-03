@@ -15,7 +15,6 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:5.2.1")
     implementation("org.json:json:20250517")
     implementation("io.javalin:javalin:6.7.0")
-    implementation("com.github.lookfirst:sardine:5.13")
     testImplementation("org.junit.jupiter:junit-jupiter-api:5.8.1")
     testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine:5.8.1")
     testImplementation("org.testcontainers:junit-jupiter:1.20.2")
