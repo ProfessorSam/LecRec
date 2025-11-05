@@ -29,6 +29,7 @@ class IntegrationTest {
     static WireMockContainer mockApi = new WireMockContainer("wiremock/wiremock:3.6.0")
             .withNetwork(testNet)
             .withNetworkAliases("uni.local")
+            .withEnv("WIREMOCK_OPTIONS", "--verbose")
             .withMappingFromJSON("""
                     {
                       "mappings": [
@@ -115,7 +116,7 @@ class IntegrationTest {
             .withNetwork(testNet)
             .withEnv("LECREC_USERNAME", "test")
             .withEnv("LECREC_PASSWORD", "test")
-            .withEnv("LECREC_DIRECTORY", Base64.getEncoder().encodeToString("upload".getBytes()))
+            .withEnv("LECREC_DIRECTORY", Base64.getEncoder().encodeToString("".getBytes()))
             .withEnv("LECREC_ENDPOINT", Base64.getEncoder().encodeToString("http://webdav.local".getBytes()))
             .withEnv("LECREC_URLS", Base64.getEncoder().encodeToString("http://uni.local/livestream/viewer/series/testseriesid?password=stream".getBytes()))
             .withEnv("LECREC_API_BASE", "http://uni.local:8080")
@@ -133,11 +134,12 @@ class IntegrationTest {
     @Test
     void integrationTest() throws IOException {
         app.start();
+        app.followOutput(s -> System.out.print(s.getUtf8String()));
         System.out.println("Started test");
         waitForStreamToFinish();
         System.out.println("Finished test. Checking results");
         Sardine sardine = com.github.sardine.SardineFactory.begin("test", "test");
-        String endpoint = "http://" + webdav.getHost() + ":" + webdav.getMappedPort(80) + "/upload/";
+        String endpoint = "http://" + webdav.getHost() + ":" + webdav.getMappedPort(80) + "/";
         assertTrue(sardine.exists(endpoint));
         assertTrue(!sardine.list(endpoint).isEmpty());
     }

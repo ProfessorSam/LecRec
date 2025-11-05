@@ -100,10 +100,12 @@ public class Recorder extends Thread{
                     "-b:a", "128k",
                     "-movflags", "+faststart",
                     "-t", "03:00:00",
-                    "/streams/" + filename
+                    outdir.getPath() + filename
             };
-            Runtime.getRuntime().exec(command).waitFor();
+            Process p = new ProcessBuilder().inheritIO().command(command).start();
+            p.waitFor();
         } catch (IOException | InterruptedException e) {
+            e.printStackTrace();
             throw new RuntimeException(e);
         }
         streamState = StreamState.UPLOADING_STREAM;
@@ -113,6 +115,8 @@ public class Recorder extends Thread{
         String endpoint = System.getenv("LECREC_ENDPOINT");
         if(username == null || password == null || directory == null || endpoint == null){
             retrySearchingForNextEvent();
+            scheduleThreadSleepToEventStart();
+            System.out.println("Not all required environment variables are set. Skipping upload");
             return;
         }
         directory = new String(Base64.getDecoder().decode(directory), StandardCharsets.UTF_8);
@@ -151,18 +155,25 @@ public class Recorder extends Thread{
 
             try (Response response = new OkHttpClient().newCall(request).execute()) {
                 if (!response.isSuccessful()) {
-                    throw new IOException("Upload failed: " + response.code() + " " + response.message() + " " + response.body().string());
+                    System.out.println("Upload failed: " + response.code() + " " + response.message() + " " + response.body().string());
+                    streamState = StreamState.SEARCH_NEXT_EVENT;
+                    retrySearchingForNextEvent();
+                    scheduleThreadSleepToEventStart();
+                    return;
                 }
                 System.out.println("Upload successful!");
             }
             Files.delete(Paths.get(file.getAbsolutePath()));
         } catch (IOException e) {
             System.out.println("Upload failed: " + e.getMessage());
-            e.printStackTrace();
-        }
 
-        streamState = StreamState.SEARCH_NEXT_EVENT;
-        retrySearchingForNextEvent();
+            e.printStackTrace();
+        } finally {
+            streamState = StreamState.SEARCH_NEXT_EVENT;
+            System.out.println("Search for next event...");
+            retrySearchingForNextEvent();
+            scheduleThreadSleepToEventStart();
+        }
     }
 
     private String getStreamUrl(String eventID, String password){

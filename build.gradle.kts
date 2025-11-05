@@ -20,7 +20,9 @@ dependencies {
     testImplementation("org.testcontainers:junit-jupiter:1.20.2")
     testImplementation("org.testcontainers:testcontainers:1.20.2")
     testImplementation("org.testcontainers:mockserver:1.20.2")
-    testImplementation("org.wiremock.integrations.testcontainers:wiremock-testcontainers-module:1.0-alpha-15")}
+    testImplementation("org.wiremock.integrations.testcontainers:wiremock-testcontainers-module:1.0-alpha-15")
+    testImplementation("com.github.lookfirst:sardine:5.13")
+}
 
 tasks.test {
     useJUnitPlatform()

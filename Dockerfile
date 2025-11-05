@@ -1,4 +1,4 @@
-FROM openjdk:21-jdk-bookworm
+FROM eclipse-temurin:21-jdk-jammy
 RUN apt-get -y update && apt-get -y upgrade && apt-get install -y ffmpeg
 COPY ./build/libs/LecRec-1.0-SNAPSHOT-all.jar /app/app.jar
 WORKDIR /app
