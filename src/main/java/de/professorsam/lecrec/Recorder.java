@@ -5,242 +5,256 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.File;
-import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
-import java.time.temporal.ChronoUnit;
 import java.util.Base64;
 
-public class Recorder extends Thread{
+public class Recorder extends Thread {
     private static final OkHttpClient httpclient = new OkHttpClient();
-    private static final String apiBase = System.getenv().getOrDefault("LECREC_API_BASE",
-            "https://dash.uni.electures.uni-muenster.de");
+    private static final String apiBase = System.getenv().getOrDefault(
+            "LECREC_API_BASE",
+            "https://dash.uni.electures.uni-muenster.de"
+    );
 
     private final String streamurl;
-
     private final String seriesID;
-
     private final String password;
+
     private String eventID;
     private JSONObject nextEventJson;
     private JSONObject currentStreamJson;
     private Instant nextStreamStart;
     private StreamState streamState = StreamState.SEARCH_NEXT_EVENT;
-    public Recorder(String streamurl){
+
+    public Recorder(String streamurl) {
         super();
         this.streamurl = streamurl;
-        seriesID = extractSeriesId();
-        password = extractPassword();
+        this.seriesID = extractSeriesId();
+        this.password = extractPassword();
         System.out.println("Password: " + seriesID + " " + password);
     }
 
     @Override
     public void run() {
-        eventID = getNextEventId(seriesID);
-        if(eventID == null){
-            System.out.println("Could not find next event. Waiting 15 minutes untill retrying");
-            retrySearchingForNextEvent();
-            return;
+        System.out.println("Starting Recorder main loop...");
+        while (true) {
+            try {
+                switch (streamState) {
+                    case SEARCH_NEXT_EVENT -> searchNextEvent();
+                    case WAITING_FOR_STREAM -> waitForStream();
+                    case RECORDING_STREAM -> recordStream();
+                    case UPLOADING_STREAM -> uploadStream();
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+                System.out.println("Unexpected error. Retrying in 15 minutes...");
+                sleepMinutes(15);
+                streamState = StreamState.SEARCH_NEXT_EVENT;
+            }
         }
-        scheduleThreadSleepToEventStart();
     }
 
-    private void scheduleThreadSleepToEventStart(){
-        streamState = StreamState.WAITING_FOR_STREAM;
+    private void searchNextEvent() {
+        eventID = getNextEventId(seriesID);
+        if (eventID == null) {
+            System.out.println("No upcoming event found. Retrying in 15 minutes...");
+            sleepMinutes(15);
+            return;
+        }
+
         try {
             JSONArray array = nextEventJson.getJSONArray("results");
             JSONObject nextEvent = array.getJSONObject(0);
             String start = nextEvent.getString("start");
-            System.out.println("Next event starts at " + start +". Sleeping...");
             OffsetDateTime dateTime = OffsetDateTime.parse(start);
-            if(dateTime.isBefore(OffsetDateTime.now())){
-                System.out.println("Event starts in the past. Try downloading");
-                downloadStream();
-                return;
-            }
-            System.out.println("Event will start at " + dateTime);
-            Instant targetTime = dateTime.toInstant().plusSeconds(30);
-            nextStreamStart = targetTime;
-            long millis = Duration.between(Instant.now(), targetTime).toMillis();
-            Thread.sleep(millis);
-            downloadStream();
-        } catch (Exception e){
+
+            System.out.println("Next event starts at " + dateTime);
+
+            nextStreamStart = dateTime.toInstant().plusSeconds(30);
+            streamState = StreamState.WAITING_FOR_STREAM;
+        } catch (Exception e) {
             e.printStackTrace();
-            System.out.println("Could not get start time of next event. Retrying in 15 minutes");
-            retrySearchingForNextEvent();
+            System.out.println("Error parsing next event time. Retrying...");
+            sleepMinutes(15);
         }
     }
 
-    private void downloadStream() {
-        String streamUrl = getStreamUrl(eventID, password);
-        if(streamUrl == null){
-            System.out.println("Could not get stream url. Retrying in 15 minutes");
-            retrySearchingForNextEvent(false);
+    private void waitForStream() {
+        if (nextStreamStart == null) {
+            streamState = StreamState.SEARCH_NEXT_EVENT;
             return;
         }
-        System.out.println("Stream url: " + streamUrl);
+
+        long millisUntilStart = Duration.between(Instant.now(), nextStreamStart).toMillis();
+        if (millisUntilStart > 0) {
+            System.out.println("Waiting " + millisUntilStart / 1000 + " seconds for next stream...");
+            sleepMillis(millisUntilStart);
+        }
+
+        String streamUrl = getStreamUrl(eventID, password);
+        if (streamUrl == null) {
+            System.out.println("Stream not active or URL missing. Retrying in 15 minutes...");
+            sleepMinutes(15);
+            streamState = StreamState.SEARCH_NEXT_EVENT;
+            return;
+        }
+
+        this.currentStreamJson = new JSONObject();
+        this.currentStreamJson.put("url", streamUrl);
         streamState = StreamState.RECORDING_STREAM;
+    }
+
+    private void recordStream() {
+        String streamUrl = currentStreamJson.optString("url", null);
+        if (streamUrl == null) {
+            System.out.println("Stream URL not available, searching again...");
+            streamState = StreamState.SEARCH_NEXT_EVENT;
+            return;
+        }
+
+        System.out.println("Recording stream: " + streamUrl);
         File outdir = new File("/streams");
         outdir.mkdirs();
         String filename = Instant.now().getEpochSecond() + ".mp4";
+        File file = new File(outdir, filename);
+
         try {
             String[] command = {
                     "ffmpeg",
-                    "-reconnect", "1",
-                    "-reconnect_streamed", "1",
-                    "-reconnect_delay_max", "10",
-                    "-fflags", "+genpts+igndts+discardcorrupt",
                     "-i", streamUrl,
                     "-c:v", "copy",
                     "-c:a", "aac",
                     "-b:a", "128k",
                     "-movflags", "+faststart",
-                    "-t", "03:00:00",
-                    outdir.getPath() + filename
+                    "-max_reload", "0",
+                    "-timeout", "5000000",
+                    "-rw_timeout", "5000000",
+                    "-loglevel", "warning",
+                    outdir.getPath() + "/" + filename
             };
+            ;
             Process p = new ProcessBuilder().inheritIO().command(command).start();
             p.waitFor();
-        } catch (IOException | InterruptedException e) {
+        } catch (Exception e) {
             e.printStackTrace();
-            throw new RuntimeException(e);
+            System.out.println("Recording failed. Retrying search...");
+            streamState = StreamState.SEARCH_NEXT_EVENT;
+            return;
         }
-        streamState = StreamState.UPLOADING_STREAM;
+
+        if (file.exists()) {
+            currentStreamJson.put("recordedFile", file.getAbsolutePath());
+            streamState = StreamState.UPLOADING_STREAM;
+        } else {
+            System.out.println("Recorded file missing. Retrying search...");
+            streamState = StreamState.SEARCH_NEXT_EVENT;
+        }
+    }
+
+    private void uploadStream() {
         String username = System.getenv("LECREC_USERNAME");
         String password = System.getenv("LECREC_PASSWORD");
         String directory = System.getenv("LECREC_DIRECTORY");
         String endpoint = System.getenv("LECREC_ENDPOINT");
-        if(username == null || password == null || directory == null || endpoint == null){
-            retrySearchingForNextEvent();
-            scheduleThreadSleepToEventStart();
-            System.out.println("Not all required environment variables are set. Skipping upload");
+
+        if (username == null || password == null || directory == null || endpoint == null) {
+            System.out.println("Upload skipped: Missing environment variables.");
+            streamState = StreamState.SEARCH_NEXT_EVENT;
             return;
         }
+
         directory = new String(Base64.getDecoder().decode(directory), StandardCharsets.UTF_8);
         endpoint = new String(Base64.getDecoder().decode(endpoint), StandardCharsets.UTF_8);
-        File file = new File(outdir, filename);
-        if (!file.exists()) {
-            System.err.println("Recording not found" + file.getAbsolutePath());
+
+        if (!endpoint.endsWith("/")) endpoint += "/";
+        if (directory.startsWith("/")) directory = directory.substring(1);
+        if (!directory.endsWith("/")) directory += "/";
+
+        String filePath = currentStreamJson.optString("recordedFile", null);
+        if (filePath == null) {
+            System.out.println("No recorded file found to upload.");
+            streamState = StreamState.SEARCH_NEXT_EVENT;
             return;
         }
-        if(!endpoint.endsWith("/")){
-            endpoint += "/";
-        }
-        if(directory.startsWith("/")){
-            directory = directory.substring(1);
-        }
-        if(!directory.endsWith("/")){
-            directory += "/";
-        }
-        try {
-            String credentials = username + ":" + password;
-            String basicAuth = "Basic " + Base64.getEncoder().encodeToString(credentials.getBytes());
 
-            String targetUrl = endpoint;
-            System.out.println("Uploading Stream to: " + targetUrl);
-            if (!targetUrl.endsWith("/")) targetUrl += "/";
-            targetUrl += directory + file.getName();
-
-            System.out.println("Uploading to: " + targetUrl);
-
-            RequestBody body = RequestBody.create(file, MediaType.parse("application/octet-stream"));
-            Request request = new Request.Builder()
-                    .url(targetUrl)
-                    .header("Authorization", basicAuth)
-                    .put(body)
-                    .build();
-
-            try (Response response = new OkHttpClient().newCall(request).execute()) {
-                if (!response.isSuccessful()) {
-                    System.out.println("Upload failed: " + response.code() + " " + response.message() + " " + response.body().string());
-                    streamState = StreamState.SEARCH_NEXT_EVENT;
-                    retrySearchingForNextEvent();
-                    scheduleThreadSleepToEventStart();
-                    return;
-                }
-                System.out.println("Upload successful!");
-            }
-            Files.delete(Paths.get(file.getAbsolutePath()));
-        } catch (IOException e) {
-            System.out.println("Upload failed: " + e.getMessage());
-
-            e.printStackTrace();
-        } finally {
+        File file = new File(filePath);
+        if (!file.exists()) {
+            System.out.println("File not found: " + file.getAbsolutePath());
             streamState = StreamState.SEARCH_NEXT_EVENT;
-            System.out.println("Search for next event...");
-            retrySearchingForNextEvent();
-            scheduleThreadSleepToEventStart();
+            return;
         }
-    }
 
-    private String getStreamUrl(String eventID, String password){
-        String apiUrl = apiBase + "/api/livestream/events/" + eventID;
-        if(password != null){
-            apiUrl += "?password=" + password;
-        }
-        System.out.println(apiUrl);
+        String credentials = username + ":" + password;
+        String basicAuth = "Basic " + Base64.getEncoder().encodeToString(credentials.getBytes());
+        String targetUrl = endpoint + directory + file.getName();
+
+        System.out.println("Uploading to: " + targetUrl);
+
+        RequestBody body = RequestBody.create(file, MediaType.parse("application/octet-stream"));
         Request request = new Request.Builder()
-                .url(apiUrl)
+                .url(targetUrl)
+                .header("Authorization", basicAuth)
+                .put(body)
                 .build();
+
         try (Response response = httpclient.newCall(request).execute()) {
-            if(!response.isSuccessful()){
-                System.out.println("Could not get stream url");
+            if (!response.isSuccessful()) {
+                System.out.println("Upload failed: " + response.code() + " " + response.message());
+                sleepMinutes(15);
+            } else {
+                System.out.println("Upload successful!");
+                Files.delete(Paths.get(file.getAbsolutePath()));
+            }
+        } catch (Exception e) {
+            System.out.println("Upload exception: " + e.getMessage());
+            e.printStackTrace();
+            sleepMinutes(15);
+        }
+
+        streamState = StreamState.SEARCH_NEXT_EVENT;
+    }
+
+    // --- Helper methods ---
+
+    private String getStreamUrl(String eventID, String password) {
+        String apiUrl = apiBase + "/api/livestream/events/" + eventID;
+        if (password != null) apiUrl += "?password=" + password;
+
+        Request request = new Request.Builder().url(apiUrl).build();
+        try (Response response = httpclient.newCall(request).execute()) {
+            if (!response.isSuccessful()) {
+                System.out.println("Could not get stream URL.");
                 return null;
             }
-            String json = response.body().string();
-            JSONObject jsonObject = new JSONObject(json);
-            currentStreamJson = jsonObject;
-            System.out.println(json);
-            if(!jsonObject.getBoolean("active")){
-                System.out.println("Stream not active");
+
+            JSONObject json = new JSONObject(response.body().string());
+            if (!json.getBoolean("active")) {
+                System.out.println("Stream not active yet.");
                 return null;
             }
-            return jsonObject.getString("manifest");
-        } catch (IOException e) {
-            throw new RuntimeException(e);
+            return json.getString("manifest");
+        } catch (Exception e) {
+            e.printStackTrace();
+            return null;
         }
     }
 
-    private void retrySearchingForNextEvent(){
-        retrySearchingForNextEvent(true);
-    }
-
-    private void retrySearchingForNextEvent(boolean sleepFor15Minutes){
-        try {
-            while (streamState == StreamState.SEARCH_NEXT_EVENT){
-                if(sleepFor15Minutes){
-                    Thread.sleep(Duration.of(15, ChronoUnit.MINUTES));
-                }
-                eventID = getNextEventId(seriesID);
-                if(eventID != null){
-                    streamState = StreamState.WAITING_FOR_STREAM;
-                }
-            }
-        } catch (InterruptedException e) {
-            throw new RuntimeException(e);
-        }
-    }
-
-    private String getNextEventId(String seriesID){
-
+    private String getNextEventId(String seriesID) {
         String apiUrl = apiBase + "/api/livestream/events?limit=1&series=" + seriesID;
-        Request request = new Request.Builder()
-                .url(apiUrl)
-                .build();
-        try (Response response = httpclient.newCall(request).execute()){
-            if(!response.isSuccessful()){
-                return null;
-            }
-            String json = response.body().string();
-            JSONObject jsonObject = new JSONObject(json);
+        Request request = new Request.Builder().url(apiUrl).build();
+
+        try (Response response = httpclient.newCall(request).execute()) {
+            if (!response.isSuccessful()) return null;
+            JSONObject jsonObject = new JSONObject(response.body().string());
             nextEventJson = jsonObject;
             JSONArray results = jsonObject.getJSONArray("results");
             JSONObject nextEvent = results.getJSONObject(0);
             return nextEvent.getString("id");
-        } catch (Exception e){
+        } catch (Exception e) {
             e.printStackTrace();
             return null;
         }
@@ -251,19 +265,30 @@ public class Recorder extends Thread{
             String[] split = streamurl.split("/");
             String last = split[split.length - 1];
             String password = last.split("\\?")[1];
-            password = password.substring(9);
-            System.out.println("Password: " + password);
-            return password;
-        } catch (Exception e){
+            return password.substring(9);
+        } catch (Exception e) {
             return null;
         }
     }
 
-    private String extractSeriesId(){
+    private String extractSeriesId() {
         String[] split = streamurl.split("/");
         String last = split[split.length - 1];
-        String id = last.split("\\?")[0];
-        return id;
+        return last.split("\\?")[0];
+    }
+
+    private void sleepMinutes(int min) {
+        try {
+            Thread.sleep(Duration.ofMinutes(min).toMillis());
+        } catch (InterruptedException ignored) {
+        }
+    }
+
+    private void sleepMillis(long ms) {
+        try {
+            Thread.sleep(ms);
+        } catch (InterruptedException ignored) {
+        }
     }
 
     public Instant getNextStreamStart() {
